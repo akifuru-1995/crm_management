@@ -116,6 +116,15 @@ class Task:
     memo: str
 
 
+def work_item_label(item: WorkItem) -> str:
+    return f"{item.category}: {item.title}: {item.status}"
+
+
+def task_label(task: Task) -> str:
+    kind = task.kind or "子タスク"
+    return f"{kind}: {task.title}: {task.status}"
+
+
 def parse_datetime(value: str) -> datetime:
     return datetime.strptime(value.strip(), DATETIME_FORMAT)
 
@@ -679,6 +688,7 @@ def render_timeline_month(
 def render_item_bar(item: WorkItem, week_start: date, week_end: date, children: list[Task]) -> str:
     grid_start, grid_span = week_grid(item.start_at.date(), item.end_at.date(), week_start, week_end)
     color = BAR_COLORS.get(item.category, "bar-other")
+    label = work_item_label(item)
     child_items = "".join(
         f'<li><strong>{escape(task.title)}</strong><small>{escape(format_period(task.start_at, task.end_at))} / {escape(task.status)} / {escape(task.owner or "-")}</small></li>'
         for task in sorted(children, key=lambda task: (task.start_at, task.sort_order, task.title))
@@ -687,7 +697,7 @@ def render_item_bar(item: WorkItem, week_start: date, week_end: date, children: 
         child_items = '<li><small>子タスクはありません。</small></li>'
     return f"""
     <details class="calendar-bar {color}" style="grid-column:{grid_start} / span {grid_span};">
-      <summary title="{escape(format_period(item.start_at, item.end_at))}">{escape(item.id)} {escape(item.title)}</summary>
+      <summary title="{escape(format_period(item.start_at, item.end_at))}">{escape(label)}</summary>
       <div class="bar-detail">
         <div>{escape(item.category)} / {escape(item.kind or "-")} / {escape(item.status)} / {escape(item.owner or "-")}</div>
         <div class="meta">{escape(format_period(item.start_at, item.end_at))}</div>
@@ -702,9 +712,10 @@ def render_item_bar(item: WorkItem, week_start: date, week_end: date, children: 
 
 def render_task_bar(task: Task, week_start: date, week_end: date) -> str:
     grid_start, grid_span = week_grid(task.start_at.date(), task.end_at.date(), week_start, week_end)
+    label = task_label(task)
     return f"""
     <details class="calendar-bar bar-task task" style="grid-column:{grid_start} / span {grid_span};">
-      <summary title="{escape(format_period(task.start_at, task.end_at))}">{escape(task.title)}</summary>
+      <summary title="{escape(format_period(task.start_at, task.end_at))}">{escape(label)}</summary>
       <div class="bar-detail">
         <div>{escape(task.status)} / {escape(task.owner or "-")}</div>
         <div class="meta">{escape(format_period(task.start_at, task.end_at))}</div>
@@ -748,7 +759,7 @@ def render_item_row(item: WorkItem, children: list[Task]) -> str:
     <article class="item-card">
       <div class="item-head">
         <div>
-          <div class="item-title">{escape(item.id)} {escape(item.title)}</div>
+          <div class="item-title">{escape(work_item_label(item))}</div>
           <div class="meta">{escape(format_period(item.start_at, item.end_at))} / {escape(item.owner or "-")}</div>
         </div>
         <span class="badge {badge_class}">{escape(item.category)}</span>
@@ -816,7 +827,7 @@ def render_tasks(query: dict[str, str]) -> str:
     parent_id = query.get("parent_id", "")
     if parent_id:
         tasks = [task for task in tasks if task.parent_id == parent_id]
-    parent_options = [""] + [item.id for item in items]
+    parent_options = [("", "")] + [(item.id, work_item_label(item)) for item in items]
     rows = "".join(render_task_row(task, item_by_id.get(task.parent_id)) for task in tasks)
     return f"""
     <div class="layout">
@@ -825,8 +836,8 @@ def render_tasks(query: dict[str, str]) -> str:
         <div class="section-title"><h2>子タスク</h2><span class="meta">{len(tasks)}件</span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>ID</th><th>親</th><th>タイトル</th><th>種類</th><th>状態</th><th>期間</th><th>担当</th><th>操作</th></tr></thead>
-            <tbody>{rows or '<tr><td colspan="8">子タスクはありません。</td></tr>'}</tbody>
+            <thead><tr><th>親</th><th>子タスク</th><th>種類</th><th>状態</th><th>期間</th><th>担当</th><th>操作</th></tr></thead>
+            <tbody>{rows or '<tr><td colspan="7">子タスクはありません。</td></tr>'}</tbody>
           </table>
         </div>
       </section>
@@ -834,13 +845,13 @@ def render_tasks(query: dict[str, str]) -> str:
     """
 
 
-def render_task_form(parent_id: str, parent_options: list[str]) -> str:
+def render_task_form(parent_id: str, parent_options: list[tuple[str, str]]) -> str:
     today = date.today().strftime("%Y-%m-%d")
     return f"""
     <section class="panel">
       <h3>子タスクを作成</h3>
       <form class="grid" method="post" action="/add_task">
-        <label>親タスク{select_control("parent_id", parent_id, parent_options)}</label>
+        <label>親タスク{select_control_with_labels("parent_id", parent_id, parent_options)}</label>
         <label>タイトル<input name="title" required></label>
         <label>種類<input name="kind"></label>
         <label>状態{select_control("status", "未実施", TASK_STATUSES)}</label>
@@ -856,11 +867,11 @@ def render_task_form(parent_id: str, parent_options: list[str]) -> str:
 
 
 def render_task_row(task: Task, parent: WorkItem | None) -> str:
+    parent_label = work_item_label(parent) if parent else task.parent_id
     return f"""
     <tr>
-      <td>{escape(task.id)}</td>
-      <td>{escape(task.parent_id)}<br><small>{escape(parent.title if parent else "")}</small></td>
-      <td>{escape(task.title)}</td>
+      <td>{escape(parent_label)}</td>
+      <td>{escape(task_label(task))}</td>
       <td>{escape(task.kind)}</td>
       <td>{escape(task.status)}</td>
       <td>{escape(format_period(task.start_at, task.end_at))}</td>
@@ -907,6 +918,19 @@ def select_control(name: str, selected: str, options: list[str]) -> str:
         is_selected = " selected" if option == selected else ""
         display = "なし" if option == "" else option
         option_html += f'<option value="{escape(option)}"{is_selected}>{escape(display)}</option>'
+    return f'<select name="{escape(name)}">{option_html}</select>'
+
+
+def select_control_with_labels(name: str, selected: str, options: list[tuple[str, str]]) -> str:
+    seen: set[str] = set()
+    option_html = ""
+    for value, label in options:
+        if value in seen:
+            continue
+        seen.add(value)
+        is_selected = " selected" if value == selected else ""
+        display = "なし" if label == "" else label
+        option_html += f'<option value="{escape(value)}"{is_selected}>{escape(display)}</option>'
     return f'<select name="{escape(name)}">{option_html}</select>'
 
 
